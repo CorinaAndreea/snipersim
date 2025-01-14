@@ -16,7 +16,8 @@
 #include "stats.h"
 #include "topology_info.h"
 #include "cheetah_manager.h"
-
+#include "slperceptron.h"
+#include "magic_server.h"
 #include <cstring>
 
 #if 0
@@ -195,11 +196,48 @@ Core::accessBranchPredictor(IntPtr eip, bool taken, bool indirect, IntPtr target
 {
    PerformanceModel *prfmdl = getPerformanceModel();
    BranchPredictor *bp = prfmdl->getBranchPredictor();
+   Core *core = Sim()->getCoreManager()->getCurrentCore();
+   UInt64 core_state =core->getState();
+   long int core_id= core->getId();
+   UInt64 actual_freq= Sim()->getMagicServer()->getFrequency(core_id);
+   UInt64 new_freq;
+   config::Config *cfg = Sim()->getCfg();
+
 
    if (bp)
    {
+
+    UInt64 inputs= cfg->getIntArray("perf_model/branch_predictor/inputs", core_id);
+    UInt64 threshold = cfg->getIntArray("perf_model/branch_predictor/threshold", core_id);
+    UInt64 maxWeight = cfg->getIntArray("perf_model/branch_predictor/weight", core_id);
+
+    SLPerceptron *perceptron= new SLPerceptron(inputs, threshold, maxWeight);
+
       bool prediction = bp->predict(indirect, eip, target);
       bp->update(prediction, taken, indirect, eip, target);
+
+    UInt64 slp_prediction=perceptron->predict(eip,core_state,core_id);
+
+   //   printf("The SLP is: %d\n", slp_prediction);
+   //   printf("The Core is: %d\n", core_state);
+
+    perceptron->train(eip, slp_prediction, core_id, core_state);
+
+        if(slp_prediction==0) //idle
+        { 
+         new_freq=1000;  
+        }
+        else
+        { 
+         new_freq=2660;
+        }
+       
+       if(actual_freq!=new_freq)
+       {
+         Sim()->getMagicServer()->setFrequency(core_id, new_freq);
+
+       }
+
       return (prediction != taken);
    }
    else
